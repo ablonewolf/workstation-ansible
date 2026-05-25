@@ -1,0 +1,25 @@
+themes:
+  - name: Lavanda-kde
+    repo: https://github.com/vinceliuice/Lavanda-kde.git
+    dest: Lavanda-kde
+    install_command: ./install.sh
+
+  - name: Azure-kde
+    repo: https://github.com/yeyushengfan258/Azure-kde.git
+    dest: Azure-kde
+    install_command: ./install.sh
+
+  - name: WinSur-kde
+    repo: https://github.com/yeyushengfan258/WinSur-kde.git
+    dest: WinSur-kde
+    install_command: ./install.sh
+
+  - name: McSur-kde
+    repo: https://github.com/yeyushengfan258/McSur-kde.git
+    dest: McSur-kde
+    install_command: ./install.sh
+
+  - name: Win11OS-kde
+    repo: https://github.com/yeyushengfan258/Win11OS-kde.git
+    dest: Win11OS-kde
+    install_command: ./install.sh
