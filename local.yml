@@ -37,52 +37,61 @@
         name: "{{ lookup('file', 'pkglist-official.txt').splitlines() }}"
         state: present
 
+    - name: Check whether paru is installed
+      become: false
+      ansible.builtin.command: command -v paru
+      register: paru_check
+      changed_when: false
+      failed_when: false
+
     - name: Install paru if missing
       become: false
       ansible.builtin.shell: |
-        set -e
-        if ! command -v paru >/dev/null 2>&1; then
-          tmpdir="$(mktemp -d)"
-          git clone https://aur.archlinux.org/paru.git "$tmpdir/paru"
-          cd "$tmpdir/paru"
-          makepkg -si --noconfirm
-          rm -rf "$tmpdir"
-        fi
+        set -euo pipefail
+        tmpdir="$(mktemp -d)"
+        git clone https://aur.archlinux.org/paru.git "$tmpdir/paru"
+        cd "$tmpdir/paru"
+        makepkg -si --noconfirm
+        rm -rf "$tmpdir"
       args:
         executable: /bin/bash
+      when: paru_check.rc != 0
+      changed_when: paru_check.rc != 0
 
     - name: Install AUR packages from manifest
       become: false
       ansible.builtin.shell: |
-        set -e
-        if [ -s pkglist-aur.txt ]; then
-          paru -S --needed --noconfirm $(cat pkglist-aur.txt)
-        fi
+        set -euo pipefail
+        paru -S --needed --noconfirm $(cat pkglist-aur.txt)
       args:
         executable: /bin/bash
         chdir: "{{ playbook_dir }}"
+      when:
+        - not ansible_check_mode
+        - lookup('file', 'pkglist-aur.txt') | trim | length > 0
+      changed_when: false
 
     - name: Ensure Flathub exists
       become: false
-      ansible.builtin.shell: |
-        flatpak remote-add --if-not-exists flathub \
-          https://flathub.org/repo/flathub.flatpakrepo
-      args:
-        executable: /bin/bash
+      ansible.builtin.command:
+        cmd: flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+      changed_when: false
 
     - name: Install Flatpak apps from manifest
       become: false
       ansible.builtin.shell: |
-        set -e
-        if [ -s pkglist-flatpak.txt ]; then
-          while read -r app; do
-            [ -z "$app" ] && continue
-            flatpak install -y flathub "$app"
-          done < pkglist-flatpak.txt
-        fi
+        set -euo pipefail
+        while read -r app; do
+          [ -z "$app" ] && continue
+          flatpak install -y flathub "$app"
+        done < pkglist-flatpak.txt
       args:
         executable: /bin/bash
         chdir: "{{ playbook_dir }}"
+      when:
+        - not ansible_check_mode
+        - lookup('file', 'pkglist-flatpak.txt') | trim | length > 0
+      changed_when: false
 
     - name: Create theme source directory
       become: false
@@ -96,134 +105,139 @@
       ansible.builtin.git:
         repo: "{{ item.repo }}"
         dest: "{{ theme_source_dir }}/{{ item.dest }}"
+        version: "{{ item.version | default('HEAD') }}"
         update: true
       loop: "{{ themes }}"
 
     - name: Install KDE themes
       become: false
       ansible.builtin.shell: |
-        set -e
+        set -euo pipefail
         {{ item.install_command }}
       args:
         chdir: "{{ theme_source_dir }}/{{ item.dest }}"
         executable: /bin/bash
       loop: "{{ themes }}"
+      when: not ansible_check_mode
+      changed_when: false
 
     - name: Make Adwaita cursor visible in KDE System Settings
-      ansible.builtin.shell: |
-        set -e
-
-        if [ -f /usr/share/icons/Adwaita/index.theme ]; then
-          sed -i 's/^Hidden=.*/Hidden=false/' /usr/share/icons/Adwaita/index.theme
-        fi
-      args:
-        executable: /bin/bash
+      ansible.builtin.lineinfile:
+        path: /usr/share/icons/Adwaita/index.theme
+        regexp: "^Hidden="
+        line: "Hidden=false"
 
     - name: Enable Docker if installed
-      ansible.builtin.shell: |
-        if systemctl list-unit-files docker.service >/dev/null 2>&1; then
-          systemctl enable --now docker
-        fi
-      args:
-        executable: /bin/bash
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+      failed_when: false
 
     - name: Add user to docker group if docker group exists
-      ansible.builtin.shell: |
-        if getent group docker >/dev/null 2>&1; then
-          usermod -aG docker "{{ user_name }}"
-        fi
-      args:
-        executable: /bin/bash
+      ansible.builtin.user:
+        name: "{{ user_name }}"
+        groups: docker
+        append: true
+      failed_when: false
 
     - name: Enable cronie if installed
-      ansible.builtin.shell: |
-        if systemctl list-unit-files cronie.service >/dev/null 2>&1; then
-          systemctl enable --now cronie
-        fi
-      args:
-        executable: /bin/bash
+      ansible.builtin.systemd:
+        name: cronie
+        enabled: true
+        state: started
+      failed_when: false
 
     - name: Install SDKMAN if missing
       become: false
       ansible.builtin.shell: |
-        if [ ! -d "$HOME/.sdkman" ]; then
-          curl -s "https://get.sdkman.io" | bash
-        fi
+        set -euo pipefail
+        curl -s "https://get.sdkman.io" | bash
       args:
         executable: /bin/bash
+        creates: "{{ user_home }}/.sdkman/bin/sdkman-init.sh"
 
     - name: Install uv if missing
       become: false
       ansible.builtin.shell: |
-        if ! command -v uv >/dev/null 2>&1; then
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-        fi
+        set -euo pipefail
+        curl -LsSf https://astral.sh/uv/install.sh | sh
       args:
         executable: /bin/bash
+        creates: "{{ user_home }}/.local/bin/uv"
 
     - name: Install rustup if missing
       become: false
       ansible.builtin.shell: |
-        if ! command -v rustup >/dev/null 2>&1; then
-          curl https://sh.rustup.rs -sSf | sh -s -- -y
-        fi
+        set -euo pipefail
+        curl https://sh.rustup.rs -sSf | sh -s -- -y
       args:
         executable: /bin/bash
+        creates: "{{ user_home }}/.cargo/bin/rustup"
 
     - name: Install nvm if missing
       become: false
       ansible.builtin.shell: |
-        if [ ! -d "$HOME/.nvm" ]; then
-          curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
-        fi
+        set -euo pipefail
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
       args:
         executable: /bin/bash
+        creates: "{{ user_home }}/.nvm/nvm.sh"
 
     - name: Install pyenv if missing
       become: false
       ansible.builtin.shell: |
-        if [ ! -d "$HOME/.pyenv" ]; then
-          curl https://pyenv.run | bash
-        fi
+        set -euo pipefail
+        curl https://pyenv.run | bash
       args:
         executable: /bin/bash
+        creates: "{{ user_home }}/.pyenv/bin/pyenv"
 
     - name: Initialize PostgreSQL database if missing
       ansible.builtin.shell: |
+        set -euo pipefail
         if [ ! -f /var/lib/postgres/data/PG_VERSION ]; then
           sudo -u postgres initdb -D /var/lib/postgres/data
         fi
       args:
         executable: /bin/bash
+      changed_when: false
+      failed_when: false
 
     - name: Enable PostgreSQL service
       ansible.builtin.systemd:
         name: postgresql
         enabled: true
         state: started
+      failed_when: false
 
     - name: Set postgres database user password
       ansible.builtin.shell: |
+        set -euo pipefail
         sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
       args:
         executable: /bin/bash
+      changed_when: false
+      failed_when: false
 
     - name: Initialize chezmoi repo if missing
       become: false
       ansible.builtin.shell: |
-        if [ ! -d "$HOME/.local/share/chezmoi/.git" ]; then
-          chezmoi init "{{ chezmoi_repo }}"
-        fi
+        set -euo pipefail
+        chezmoi init "{{ chezmoi_repo }}"
       args:
         executable: /bin/bash
+        creates: "{{ user_home }}/.local/share/chezmoi/.git"
 
     - name: Apply chezmoi dotfiles
       become: false
-      ansible.builtin.shell: |
-        chezmoi apply
-      args:
-        executable: /bin/bash
+      ansible.builtin.command:
+        cmd: chezmoi apply
+      changed_when: false
 
     - name: Final message
       ansible.builtin.debug:
-        msg: "Setup completed. Log out and log back in so Docker group membership, shell paths, KDE themes, cursor settings, and Plasma settings fully apply."
+        msg:
+          - "Setup completed."
+          - "Log out and log back in so Docker group membership, shell paths,"
+          - "KDE themes, cursor settings, PostgreSQL, and Plasma settings fully apply."
