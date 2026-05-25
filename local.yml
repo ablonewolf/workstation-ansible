@@ -1,17 +1,13 @@
 ---
-- name: Set up CachyOS workstation
+- name: Set up CachyOS workstation system packages and services
   hosts: localhost
   connection: local
   become: true
 
   vars:
-    user_name: "{{ lookup('env', 'USER') }}"
-    user_home: "{{ lookup('env', 'HOME') }}"
+    user_name: "lonewolf"
+    user_home: "/home/lonewolf"
     chezmoi_repo: "https://github.com/ablonewolf/system-config.git"
-    theme_source_dir: "{{ lookup('env', 'HOME') }}/theme-sources"
-
-  vars_files:
-    - themes.yml
 
   tasks:
     - name: Update pacman cache
@@ -30,96 +26,13 @@
           - flatpak
           - chezmoi
           - adwaita-cursors
+          - paru
         state: present
 
     - name: Install official packages from manifest
       community.general.pacman:
         name: "{{ lookup('file', 'pkglist-official.txt').splitlines() }}"
         state: present
-
-    - name: Check whether paru is installed
-      become: false
-      ansible.builtin.command: command -v paru
-      register: paru_check
-      changed_when: false
-      failed_when: false
-
-    - name: Install paru if missing
-      become: false
-      ansible.builtin.shell: |
-        set -euo pipefail
-        tmpdir="$(mktemp -d)"
-        git clone https://aur.archlinux.org/paru.git "$tmpdir/paru"
-        cd "$tmpdir/paru"
-        makepkg -si --noconfirm
-        rm -rf "$tmpdir"
-      args:
-        executable: /bin/bash
-      when: paru_check.rc != 0
-      changed_when: paru_check.rc != 0
-
-    - name: Install AUR packages from manifest
-      become: false
-      ansible.builtin.shell: |
-        set -euo pipefail
-        paru -S --needed --noconfirm $(cat pkglist-aur.txt)
-      args:
-        executable: /bin/bash
-        chdir: "{{ playbook_dir }}"
-      when:
-        - not ansible_check_mode
-        - lookup('file', 'pkglist-aur.txt') | trim | length > 0
-      changed_when: false
-
-    - name: Ensure Flathub exists
-      become: false
-      ansible.builtin.command:
-        cmd: flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-      changed_when: false
-
-    - name: Install Flatpak apps from manifest
-      become: false
-      ansible.builtin.shell: |
-        set -euo pipefail
-        while read -r app; do
-          [ -z "$app" ] && continue
-          flatpak install -y flathub "$app"
-        done < pkglist-flatpak.txt
-      args:
-        executable: /bin/bash
-        chdir: "{{ playbook_dir }}"
-      when:
-        - not ansible_check_mode
-        - lookup('file', 'pkglist-flatpak.txt') | trim | length > 0
-      changed_when: false
-
-    - name: Create theme source directory
-      become: false
-      ansible.builtin.file:
-        path: "{{ theme_source_dir }}"
-        state: directory
-        mode: "0755"
-
-    - name: Clone KDE theme repositories
-      become: false
-      ansible.builtin.git:
-        repo: "{{ item.repo }}"
-        dest: "{{ theme_source_dir }}/{{ item.dest }}"
-        version: "{{ item.version | default('HEAD') }}"
-        update: true
-      loop: "{{ themes }}"
-
-    - name: Install KDE themes
-      become: false
-      ansible.builtin.shell: |
-        set -euo pipefail
-        {{ item.install_command }}
-      args:
-        chdir: "{{ theme_source_dir }}/{{ item.dest }}"
-        executable: /bin/bash
-      loop: "{{ themes }}"
-      when: not ansible_check_mode
-      changed_when: false
 
     - name: Make Adwaita cursor visible in KDE System Settings
       ansible.builtin.lineinfile:
@@ -148,56 +61,6 @@
         state: started
       failed_when: false
 
-    - name: Install SDKMAN if missing
-      become: false
-      ansible.builtin.shell: |
-        set -euo pipefail
-        curl -s "https://get.sdkman.io" | bash
-      args:
-        executable: /bin/bash
-        creates: "{{ user_home }}/.sdkman/bin/sdkman-init.sh"
-      when: not ansible_check_mode
-
-    - name: Install uv if missing
-      become: false
-      ansible.builtin.shell: |
-        set -euo pipefail
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-      args:
-        executable: /bin/bash
-        creates: "{{ user_home }}/.local/bin/uv"
-      when: not ansible_check_mode
-
-    - name: Install rustup if missing
-      become: false
-      ansible.builtin.shell: |
-        set -euo pipefail
-        curl https://sh.rustup.rs -sSf | sh -s -- -y
-      args:
-        executable: /bin/bash
-        creates: "{{ user_home }}/.cargo/bin/rustup"
-      when: not ansible_check_mode
-
-    - name: Install nvm if missing
-      become: false
-      ansible.builtin.shell: |
-        set -euo pipefail
-        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
-      args:
-        executable: /bin/bash
-        creates: "{{ user_home }}/.nvm/nvm.sh"
-      when: not ansible_check_mode
-
-    - name: Install pyenv if missing
-      become: false
-      ansible.builtin.shell: |
-        set -euo pipefail
-        curl https://pyenv.run | bash
-      args:
-        executable: /bin/bash
-        creates: "{{ user_home }}/.pyenv/bin/pyenv"
-      when: not ansible_check_mode
-
     - name: Initialize PostgreSQL database if missing
       ansible.builtin.shell: |
         set -euo pipefail
@@ -225,8 +88,123 @@
       changed_when: false
       failed_when: false
 
+
+- name: Set up CachyOS workstation user packages, themes, and dotfiles
+  hosts: localhost
+  connection: local
+  become: false
+
+  vars:
+    user_name: "lonewolf"
+    user_home: "/home/lonewolf"
+    chezmoi_repo: "https://github.com/ablonewolf/system-config.git"
+    theme_source_dir: "/home/lonewolf/theme-sources"
+
+  vars_files:
+    - themes.yml
+
+  tasks:
+    - name: Install AUR-named packages through CachyOS repositories when available
+      community.general.pacman:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ lookup('file', 'pkglist-aur.txt').splitlines() }}"
+      register: aur_via_pacman_result
+      failed_when: false
+      when:
+        - lookup('file', 'pkglist-aur.txt') | trim | length > 0
+
+    - name: Ensure Flathub exists
+      ansible.builtin.command:
+        cmd: flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+      changed_when: false
+
+    - name: Install Flatpak apps from manifest
+      ansible.builtin.shell: |
+        set -euo pipefail
+        while read -r app; do
+          [ -z "$app" ] && continue
+          flatpak install -y flathub "$app"
+        done < pkglist-flatpak.txt
+      args:
+        executable: /bin/bash
+        chdir: "{{ playbook_dir }}"
+      when:
+        - not ansible_check_mode
+        - lookup('file', 'pkglist-flatpak.txt') | trim | length > 0
+      changed_when: false
+
+    - name: Create theme source directory
+      ansible.builtin.file:
+        path: "{{ theme_source_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Clone KDE theme repositories
+      ansible.builtin.git:
+        repo: "{{ item.repo }}"
+        dest: "{{ theme_source_dir }}/{{ item.dest }}"
+        version: "{{ item.version | default('HEAD') }}"
+        update: true
+      loop: "{{ themes }}"
+
+    - name: Install KDE themes
+      ansible.builtin.shell: |
+        set -euo pipefail
+        {{ item.install_command }}
+      args:
+        chdir: "{{ theme_source_dir }}/{{ item.dest }}"
+        executable: /bin/bash
+      loop: "{{ themes }}"
+      when: not ansible_check_mode
+      changed_when: false
+
+    - name: Install SDKMAN if missing
+      ansible.builtin.shell: |
+        set -euo pipefail
+        curl -s "https://get.sdkman.io" | bash
+      args:
+        executable: /bin/bash
+        creates: "{{ user_home }}/.sdkman/bin/sdkman-init.sh"
+      when: not ansible_check_mode
+
+    - name: Install uv if missing
+      ansible.builtin.shell: |
+        set -euo pipefail
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+      args:
+        executable: /bin/bash
+        creates: "{{ user_home }}/.local/bin/uv"
+      when: not ansible_check_mode
+
+    - name: Install rustup if missing
+      ansible.builtin.shell: |
+        set -euo pipefail
+        curl https://sh.rustup.rs -sSf | sh -s -- -y
+      args:
+        executable: /bin/bash
+        creates: "{{ user_home }}/.cargo/bin/rustup"
+      when: not ansible_check_mode
+
+    - name: Install nvm if missing
+      ansible.builtin.shell: |
+        set -euo pipefail
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
+      args:
+        executable: /bin/bash
+        creates: "{{ user_home }}/.nvm/nvm.sh"
+      when: not ansible_check_mode
+
+    - name: Install pyenv if missing
+      ansible.builtin.shell: |
+        set -euo pipefail
+        curl https://pyenv.run | bash
+      args:
+        executable: /bin/bash
+        creates: "{{ user_home }}/.pyenv/bin/pyenv"
+      when: not ansible_check_mode
+
     - name: Initialize chezmoi repo if missing
-      become: false
       ansible.builtin.shell: |
         set -euo pipefail
         chezmoi init "{{ chezmoi_repo }}"
@@ -235,7 +213,6 @@
         creates: "{{ user_home }}/.local/share/chezmoi/.git"
 
     - name: Apply chezmoi dotfiles
-      become: false
       ansible.builtin.command:
         cmd: chezmoi apply
       changed_when: false
