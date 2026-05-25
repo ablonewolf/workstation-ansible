@@ -104,15 +104,23 @@
     - themes.yml
 
   tasks:
-    - name: Install AUR-named packages through CachyOS repositories when available
+    - name: Install yay
       community.general.pacman:
-        name: "{{ item }}"
+        name: yay
         state: present
-      loop: "{{ lookup('file', 'pkglist-aur.txt').splitlines() }}"
-      register: aur_via_pacman_result
-      failed_when: false
+
+    - name: Install AUR packages from manifest using yay
+      become: false
+      ansible.builtin.shell: |
+        set -euo pipefail
+        yay -S --needed --noconfirm --answerclean None --answerdiff None $(cat pkglist-aur.txt)
+      args:
+        executable: /bin/bash
+        chdir: "{{ playbook_dir }}"
       when:
+        - not ansible_check_mode
         - lookup('file', 'pkglist-aur.txt') | trim | length > 0
+      changed_when: false
 
     - name: Ensure Flathub exists
       ansible.builtin.command:
@@ -166,42 +174,6 @@
       args:
         executable: /bin/bash
         creates: "{{ user_home }}/.sdkman/bin/sdkman-init.sh"
-      when: not ansible_check_mode
-
-    - name: Install uv if missing
-      ansible.builtin.shell: |
-        set -euo pipefail
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-      args:
-        executable: /bin/bash
-        creates: "{{ user_home }}/.local/bin/uv"
-      when: not ansible_check_mode
-
-    - name: Install rustup if missing
-      ansible.builtin.shell: |
-        set -euo pipefail
-        curl https://sh.rustup.rs -sSf | sh -s -- -y
-      args:
-        executable: /bin/bash
-        creates: "{{ user_home }}/.cargo/bin/rustup"
-      when: not ansible_check_mode
-
-    - name: Install nvm if missing
-      ansible.builtin.shell: |
-        set -euo pipefail
-        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
-      args:
-        executable: /bin/bash
-        creates: "{{ user_home }}/.nvm/nvm.sh"
-      when: not ansible_check_mode
-
-    - name: Install pyenv if missing
-      ansible.builtin.shell: |
-        set -euo pipefail
-        curl https://pyenv.run | bash
-      args:
-        executable: /bin/bash
-        creates: "{{ user_home }}/.pyenv/bin/pyenv"
       when: not ansible_check_mode
 
     - name: Initialize chezmoi repo if missing
