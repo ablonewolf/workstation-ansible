@@ -156,6 +156,7 @@
       args:
         executable: /bin/bash
         creates: "{{ user_home }}/.sdkman/bin/sdkman-init.sh"
+      when: not ansible_check_mode
 
     - name: Install uv if missing
       become: false
@@ -165,6 +166,7 @@
       args:
         executable: /bin/bash
         creates: "{{ user_home }}/.local/bin/uv"
+      when: not ansible_check_mode
 
     - name: Install rustup if missing
       become: false
@@ -174,6 +176,7 @@
       args:
         executable: /bin/bash
         creates: "{{ user_home }}/.cargo/bin/rustup"
+      when: not ansible_check_mode
 
     - name: Install nvm if missing
       become: false
@@ -183,6 +186,7 @@
       args:
         executable: /bin/bash
         creates: "{{ user_home }}/.nvm/nvm.sh"
+      when: not ansible_check_mode
 
     - name: Install pyenv if missing
       become: false
@@ -192,6 +196,7 @@
       args:
         executable: /bin/bash
         creates: "{{ user_home }}/.pyenv/bin/pyenv"
+      when: not ansible_check_mode
 
     - name: Initialize PostgreSQL database if missing
       ansible.builtin.shell: |
@@ -234,6 +239,7 @@
       ansible.builtin.command:
         cmd: chezmoi apply
       changed_when: false
+      when: not ansible_check_mode
 
     - name: Final message
       ansible.builtin.debug:
