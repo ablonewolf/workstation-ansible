@@ -267,3 +267,4 @@ xsettingsd
 yakuake
 yay
 zip
+tela-circle-icon-theme-black
