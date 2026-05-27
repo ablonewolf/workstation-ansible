@@ -176,6 +176,26 @@
         creates: "{{ user_home }}/.sdkman/bin/sdkman-init.sh"
       when: not ansible_check_mode
 
+    - name: Install SDKMAN default candidates from manifest
+      ansible.builtin.shell: |
+        set -eo pipefail
+
+        export SDKMAN_DIR="{{ user_home }}/.sdkman"
+        source "{{ user_home }}/.sdkman/bin/sdkman-init.sh"
+
+        tail -n +2 sdkman-packages.txt | while read -r candidate version; do
+          [ -z "$candidate" ] && continue
+          sdk install "$candidate" "$version"
+          sdk default "$candidate" "$version"
+        done
+      args:
+        executable: /bin/bash
+        chdir: "{{ playbook_dir }}"
+      when:
+        - not ansible_check_mode
+        - lookup('file', 'sdkman-packages.txt') | trim | length > 0
+      changed_when: false
+
     - name: Initialize chezmoi repo if missing
       ansible.builtin.shell: |
         set -euo pipefail

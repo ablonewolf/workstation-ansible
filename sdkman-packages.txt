@@ -1,0 +1,7 @@
+Current default versions:
+gradle 9.4.1
+grails 2.5.3
+groovy 2.4.4
+java 21.0.10-oracle
+maven 3.9.14
+micronaut 5.0.0
