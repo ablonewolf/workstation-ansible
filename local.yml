@@ -3,11 +3,12 @@
   hosts: localhost
   connection: local
   become: true
+  tags:
+    - system
 
   vars:
-    user_name: "lonewolf"
-    user_home: "/home/lonewolf"
-    chezmoi_repo: "https://github.com/ablonewolf/system-config.git"
+    user_name: "{{ lookup('env', 'SUDO_USER') | default(lookup('env', 'USER'), true) }}"
+    user_home: "/home/{{ user_name }}"
 
   tasks:
     - name: Update pacman cache
@@ -26,13 +27,22 @@
           - flatpak
           - chezmoi
           - adwaita-cursors
-          - paru
+          - yay
         state: present
 
     - name: Install official packages from manifest
       community.general.pacman:
         name: "{{ lookup('file', 'pkglist-official.txt').splitlines() }}"
         state: present
+
+    - name: Install AUR-manifest packages through CachyOS repos when available
+      community.general.pacman:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ lookup('file', 'pkglist-aur.txt').splitlines() }}"
+      failed_when: false
+      when:
+        - lookup('file', 'pkglist-aur.txt') | trim | length > 0
 
     - name: Make Adwaita cursor visible in KDE System Settings
       ansible.builtin.lineinfile:
@@ -63,7 +73,7 @@
 
     - name: Initialize PostgreSQL database if missing
       ansible.builtin.shell: |
-        set -euo pipefail
+        set -eo pipefail
         if [ ! -f /var/lib/postgres/data/PG_VERSION ]; then
           sudo -u postgres initdb -D /var/lib/postgres/data
         fi
@@ -81,7 +91,7 @@
 
     - name: Set postgres database user password
       ansible.builtin.shell: |
-        set -euo pipefail
+        set -eo pipefail
         sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
       args:
         executable: /bin/bash
@@ -93,27 +103,44 @@
   hosts: localhost
   connection: local
   become: false
+  tags:
+    - user
 
   vars:
-    user_name: "lonewolf"
-    user_home: "/home/lonewolf"
+    user_name: "{{ lookup('env', 'USER') }}"
+    user_home: "{{ lookup('env', 'HOME') }}"
     chezmoi_repo: "https://github.com/ablonewolf/system-config.git"
-    theme_source_dir: "/home/lonewolf/theme-sources"
+    theme_source_dir: "{{ lookup('env', 'HOME') }}/theme-sources"
 
   vars_files:
     - themes.yml
 
   tasks:
-    - name: Install yay
-      community.general.pacman:
-        name: yay
-        state: present
+    - name: Refuse to run user play as root
+      ansible.builtin.command:
+        cmd: test "$(whoami)" != "root"
+      changed_when: false
 
-    - name: Install AUR packages from manifest using yay
-      become: false
+    - name: Install missing AUR packages from manifest using yay
       ansible.builtin.shell: |
-        set -euo pipefail
-        yay -S --needed --noconfirm --answerclean None --answerdiff None $(cat pkglist-aur.txt)
+        set -eo pipefail
+
+        missing_packages="$(
+          while read -r package; do
+            [ -z "$package" ] && continue
+
+            if ! pacman -Q "$package" >/dev/null 2>&1; then
+              printf '%s\n' "$package"
+            fi
+          done < pkglist-aur.txt
+        )"
+
+        if [ -z "$missing_packages" ]; then
+          echo "All AUR manifest packages are already installed. Skipping yay."
+          exit 0
+        fi
+
+        echo "$missing_packages" | xargs yay -S --needed --noconfirm --answerclean None --answerdiff None
       args:
         executable: /bin/bash
         chdir: "{{ playbook_dir }}"
@@ -129,7 +156,7 @@
 
     - name: Install Flatpak apps from manifest
       ansible.builtin.shell: |
-        set -euo pipefail
+        set -eo pipefail
         while read -r app; do
           [ -z "$app" ] && continue
           flatpak install -y flathub "$app"
@@ -158,7 +185,7 @@
 
     - name: Install KDE themes
       ansible.builtin.shell: |
-        set -euo pipefail
+        set -eo pipefail
         {{ item.install_command }}
       args:
         chdir: "{{ theme_source_dir }}/{{ item.dest }}"
@@ -169,7 +196,7 @@
 
     - name: Install SDKMAN if missing
       ansible.builtin.shell: |
-        set -euo pipefail
+        set -eo pipefail
         curl -s "https://get.sdkman.io" | bash
       args:
         executable: /bin/bash
@@ -185,7 +212,13 @@
 
         tail -n +2 sdkman-packages.txt | while read -r candidate version; do
           [ -z "$candidate" ] && continue
-          sdk install "$candidate" "$version"
+
+          if [ ! -d "$SDKMAN_DIR/candidates/$candidate/$version" ]; then
+            sdk install "$candidate" "$version"
+          else
+            echo "$candidate $version already installed. Skipping install."
+          fi
+
           sdk default "$candidate" "$version"
         done
       args:
@@ -198,16 +231,17 @@
 
     - name: Initialize chezmoi repo if missing
       ansible.builtin.shell: |
-        set -euo pipefail
+        set -eo pipefail
         chezmoi init "{{ chezmoi_repo }}"
       args:
         executable: /bin/bash
         creates: "{{ user_home }}/.local/share/chezmoi/.git"
 
-    - name: Apply chezmoi dotfiles
+    - name: Show pending chezmoi changes
       ansible.builtin.command:
-        cmd: chezmoi apply
+        cmd: chezmoi diff
       changed_when: false
+      failed_when: false
       when: not ansible_check_mode
 
     - name: Final message

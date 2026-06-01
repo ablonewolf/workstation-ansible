@@ -7,7 +7,6 @@ redisinsight-bin
 smem
 spotify
 teams-for-linux-bin
-vesktop-git
 visual-studio-code-bin
 whatsie
 zoom

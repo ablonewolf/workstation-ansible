@@ -226,7 +226,7 @@ spectacle
 sudo
 switcheroo-control
 sysfsutils
-systray-x
+systray-x-kde
 telegram-desktop
 tesseract
 tesseract-data-eng
